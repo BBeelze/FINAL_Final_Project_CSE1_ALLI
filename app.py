@@ -5,6 +5,7 @@ import datetime
 from functools import wraps
 import xml.dom.minidom
 from xml.etree.ElementTree import Element, SubElement, tostring
+import hashlib
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
@@ -49,11 +50,50 @@ def format_response(data, fmt='json'):
     else:
         return jsonify(data)
 
-# === LOGIN (GET TOKEN) ===
+# === REGISTER ===
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed))
+        mysql.connection.commit()
+        cur.close()
+        return jsonify({'message': 'User registered successfully!'}), 201
+    except Exception as e:
+        if "Duplicate entry" in str(e):
+            return jsonify({'error': 'Username already exists'}), 400
+        return jsonify({'error': 'Registration failed'}), 500
+
+# === LOGIN (REAL, WITH CREDENTIALS) ===
 @app.route('/login', methods=['POST'])
 def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM users WHERE username = %s AND password = %s", (username, hashed))
+    user = cur.fetchone()
+    cur.close()
+
+    if not user:
+        return jsonify({'error': 'Invalid credentials'}), 401
+
     token = jwt.encode({
-        'user': 'rider',
+        'user': username,
         'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
     }, app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': token})
